@@ -8200,7 +8200,22 @@ dsv41flash-fp4-gb300-vllm-agentic-dspark:
     - dram-utilization: 0.80
       search-space:
       # Engram weights use UVA DRAM; the KV cache stays GPU-resident.
-      - { tp: 4, kv-offloading: none, spec-decoding: mtp, conc-list: [1, 2, 4, 8, 16, 32, 64, 128] }
+      #
+      # 96 is added because this curve's current endpoint, c128, is dominated by it.
+      # Measured on an external 18-node GB300 cluster with both concurrencies in the
+      # SAME job on the SAME node set, so node assignment is not in the comparison:
+      #     c96   70,215 tok/s/GPU @ p90 E2E-normalised interactivity 23.6
+      #     c128  68,657                                              12.5
+      # That is +2.3% throughput AND +88.8% interactivity for c96. Across two node
+      # sets, n=2 at each concurrency, the means give +2.5% / +94%. The within-job
+      # figure is the one to trust: this arm's interactivity moves ~25% between node
+      # sets at fixed configuration (c128 read 10.0 and 12.5 on two pairs), which is
+      # enough to muddy any cross-job claim.
+      #
+      # A point worse on both axes than another point of the same arm cannot sit on a
+      # Pareto frontier, so the curve currently ends one step past its own best and
+      # does not contain that best. One extra concurrency fixes it.
+      - { tp: 4, kv-offloading: none, spec-decoding: mtp, conc-list: [1, 2, 4, 8, 16, 32, 64, 96, 128] }
 
 # H200 AgentX arm for DeepSeek-V4.1-Flash. Upstream marks h200 verified and says
 # the GB200 NVL4 TP4 layout becomes TP8 on 8-GPU nodes, so this is TP8.
