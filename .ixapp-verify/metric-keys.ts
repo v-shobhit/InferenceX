@@ -1,0 +1,222 @@
+/**
+ * Power, energy, and GPU telemetry withheld at ingest and display when the
+ * normalized `power_valid` verdict is 0. Contract and diagnostic fields are
+ * excluded so the invalid verdict remains auditable. Add new measured fields
+ * here; `METRIC_KEYS` derives from this list.
+ */
+export const MEASURED_POWER_METRIC_KEY_LIST = [
+  // measured power / energy (emitted by runner's aggregate_power.py)
+  // avg_power_w:             mean per-GPU draw (W) during the load window
+  // joules_per_successful_query: whole-deployment energy / successful requests
+  // joules_per_output_token: energy / total_output_tokens. CLUSTER-WIDE on
+  //                          schema-version-2 rows, including disaggregated runs.
+  // joules_per_total_token:  total_system_energy / (total_input + total_output)
+  //                          — cluster-wide; workload-shape-fair view that
+  //                          doesn't treat prompt as free.
+  'avg_power_w',
+  'avg_total_gpu_power_w',
+  'total_gpu_energy_j',
+  // Time-weighted percentiles of synchronized fleet draw; per-chip divides by GPU count.
+  'p75_power_w',
+  'p75_total_gpu_power_w',
+  'p90_power_w',
+  'p90_total_gpu_power_w',
+  'joules_per_successful_query',
+  'joules_per_output_token',
+  'joules_per_total_token',
+  // multinode / disagg role splits (emitted only when the deployment has
+  // distinct prefill / decode workers)
+  // prefill_avg_power_w / decode_avg_power_w:  mean per-GPU draw within each role
+  // Explicit role-local energy remains separate from the version-2 unprefixed
+  // whole-deployment fields.
+  'prefill_avg_power_w',
+  'decode_avg_power_w',
+  'joules_per_input_token',
+  'prefill_joules_per_input_token',
+  'decode_joules_per_output_token',
+  // cluster-wide GPU telemetry beyond power (emitted by aggregate_power.py when
+  // the perfmon CSVs include temperature, utilization, or memory samples).
+  // avg_temp_c:        mean per-GPU temperature (Celsius) during load window
+  // peak_temp_c:       max instantaneous per-GPU temperature in window
+  // avg_util_pct:      mean per-GPU GPU-utilization percent (0-100)
+  // avg_mem_used_mb:   mean per-GPU memory used (MiB / MB)
+  // Single-node and multinode runs both surface these as flat scalars; the
+  // per-worker breakdown carries the same fields on each entry in workers[].
+  'avg_temp_c',
+  'peak_temp_c',
+  'avg_util_pct',
+  'avg_mem_used_mb',
+] as const;
+
+export const MEASURED_POWER_METRIC_KEYS: ReadonlySet<string> = new Set(
+  MEASURED_POWER_METRIC_KEY_LIST,
+);
+
+/**
+ * Complete measured-power contract surface on `metrics`: the contract
+ * discriminators plus every measured power / energy / GPU-telemetry key.
+ * This is the set the public API documentation types on
+ * `BenchmarkRow.metrics`; it feeds METRIC_KEYS automatically.
+ */
+export const POWER_METRIC_KEYS = [
+  // measured power / energy publication contract (aggregate_power.py)
+  // power_valid: numeric 1/0 publication verdict; explicit 0 withholds power
+  // power_metric_schema_version: version 2 defines every unprefixed
+  //                              joules_per_* field as whole-deployment energy
+  'power_valid',
+  'power_metric_schema_version',
+  // measured power / energy / telemetry values, withheld when power_valid = 0
+  ...MEASURED_POWER_METRIC_KEY_LIST,
+] as const;
+
+/**
+ * Canonical set of metric keys stored in the benchmark_results.metrics JSONB column.
+ *
+ * Latency values (ttft/tpot/itl/e2el/intvty) are in seconds. Throughput values are
+ * tokens/sec — `_per_gpu` is per-GPU, `_tps` is total tokens/sec across the deployment.
+ *
+ * Distribution stats (mean/median/std/p75/p90/p95/p99/p99.9) are present for latency,
+ * QPS, and per-request token counts; agentic runs carry the full set, fixed-seq runs
+ * carry median/mean/p99/std for latency only.
+ */
+export const METRIC_KEYS = new Set([
+  'dp',
+  // throughput (tokens/sec/GPU)
+  'tput_per_gpu',
+  'output_tput_per_gpu',
+  'input_tput_per_gpu',
+  // throughput (tokens/sec, deployment total) — agentic aiperf reports both
+  'total_tput_tps',
+  'output_tput_tps',
+  'input_tput_tps',
+  // TTFT — time to first token
+  'median_ttft',
+  'mean_ttft',
+  'p75_ttft',
+  'p90_ttft',
+  'p95_ttft',
+  'p99_ttft',
+  'p99.9_ttft',
+  'std_ttft',
+  // TPOT — time per output token
+  'median_tpot',
+  'mean_tpot',
+  'p75_tpot',
+  'p90_tpot',
+  'p95_tpot',
+  'p99_tpot',
+  'p99.9_tpot',
+  'std_tpot',
+  // ITL — inter-token latency
+  'median_itl',
+  'mean_itl',
+  'p75_itl',
+  'p90_itl',
+  'p95_itl',
+  'p99_itl',
+  'p99.9_itl',
+  'std_itl',
+  // E2EL — end-to-end latency
+  'median_e2el',
+  'mean_e2el',
+  'p75_e2el',
+  'p90_e2el',
+  'p95_e2el',
+  'p99_e2el',
+  'p99.9_e2el',
+  'std_e2el',
+  // interactivity
+  'median_intvty',
+  'mean_intvty',
+  'p75_intvty',
+  'p90_intvty',
+  'p95_intvty',
+  'p99_intvty',
+  'p99.9_intvty',
+  'std_intvty',
+  // Full-response AgentX timing. These namespaced fields preserve provenance;
+  // ingest mirrors them onto the canonical *_itl / *_intvty chart fields.
+  'median_full_response_itl',
+  'mean_full_response_itl',
+  'p75_full_response_itl',
+  'p90_full_response_itl',
+  'p95_full_response_itl',
+  'p99_full_response_itl',
+  'p99.9_full_response_itl',
+  'std_full_response_itl',
+  'median_full_response_intvty',
+  'mean_full_response_intvty',
+  'p75_full_response_intvty',
+  'p90_full_response_intvty',
+  'p95_full_response_intvty',
+  'p99_full_response_intvty',
+  'p99.9_full_response_intvty',
+  'std_full_response_intvty',
+  // QPS — queries per second (agentic aiperf)
+  'median_qps',
+  'mean_qps',
+  'p75_qps',
+  'p90_qps',
+  'p95_qps',
+  'p99_qps',
+  'p99.9_qps',
+  'std_qps',
+  // per-request input token count distribution
+  'median_input_tokens',
+  'mean_input_tokens',
+  'p75_input_tokens',
+  'p90_input_tokens',
+  'p95_input_tokens',
+  'p99_input_tokens',
+  'p99.9_input_tokens',
+  'std_input_tokens',
+  // per-request output token count distribution — actual served
+  'median_output_tokens_actual',
+  'mean_output_tokens_actual',
+  'p75_output_tokens_actual',
+  'p90_output_tokens_actual',
+  'p95_output_tokens_actual',
+  'p99_output_tokens_actual',
+  'p99.9_output_tokens_actual',
+  'std_output_tokens_actual',
+  // per-request output token count distribution — expected from trace
+  'median_output_tokens_expected',
+  'mean_output_tokens_expected',
+  'p75_output_tokens_expected',
+  'p90_output_tokens_expected',
+  'p95_output_tokens_expected',
+  'p99_output_tokens_expected',
+  'p99.9_output_tokens_expected',
+  'std_output_tokens_expected',
+  // run totals (agentic aiperf)
+  'duration_seconds',
+  'total_requests_completed',
+  'total_prompt_tokens',
+  'total_generation_tokens',
+  // server prefix-cache observability (agentic aiperf)
+  'server_gpu_cache_hit_rate',
+  'server_cpu_cache_hit_rate',
+  'server_external_cache_hit_rate',
+  'theoretical_cache_hit_rate',
+  // server KV-cache occupancy — mean GPU KV-cache usage fraction (0-1) over the
+  // profiling window (agentic aiperf; flat in v2 artifacts, mapped from
+  // server_metrics.kv_cache.gpu_usage_pct in v3)
+  'gpu_kv_cache_usage_pct',
+  ...POWER_METRIC_KEYS,
+  // extended parallelism dimensions (2026-07+ artifacts): pipeline parallelism
+  // and decode/prefill context parallelism per role. These are config
+  // dimensions, not measurements, but the configs table has no columns for
+  // them — they ride along in the metrics JSONB via the mapper's auto-capture
+  // and the frontend reads pp from here for point labels / tooltips
+  // (rowToAggDataEntry in benchmark-transform.ts).
+  'prefill_pp',
+  'decode_pp',
+  // Aggregate artifacts emit one context-parallel width, while disaggregated
+  // artifacts may emit a separate value for each role.
+  'dcp_size',
+  'pcp_size',
+  'prefill_dcp_size',
+  'decode_dcp_size',
+  'prefill_pcp_size',
+  'decode_pcp_size',
+]);
