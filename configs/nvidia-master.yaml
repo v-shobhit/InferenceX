@@ -8201,6 +8201,125 @@ dsv41flash-fp4-gb300-vllm-agentic-dspark:
       search-space:
       # Engram weights use UVA DRAM; the KV cache stays GPU-resident.
       - { tp: 4, kv-offloading: none, spec-decoding: mtp, conc-list: [1, 2, 4, 8, 16, 32, 64, 128] }
+      # Two-GPU instances of the same recipe. The B300 arm carries a tp: 2 row with
+      # this conc-list, but note what that took: PR #3109 landed the B300 tp: 2 row
+      # together with a dedicated B300 script, replacing that arm's symlink to the
+      # shared one, and its TP2 branch at CONC >= 128 sets MAX_BATCHED_TOKENS 2048,
+      # the 2046 graph tier, and --gpu-memory-utilization 0.97. Those concessions
+      # exist because the B300 script asks for 8192 batched tokens and graph sizes up
+      # to 8190; the shared dsv41flash_fp4_vllm_mtp.sh passes neither
+      # --compilation-config nor --max-num-batched-tokens, so it never requests that
+      # memory and needs no such branch. This row therefore changes no script.
+      #
+      # Capacity, measured on the target rather than taken from a spec sheet.
+      # dcgm-exporter reports DCGM_FI_DEV_FB_TOTAL = 284,208 MiB (277.5 GiB) per GPU
+      # on modelName "NVIDIA GB300", and vLLM resolves --gpu-memory-utilization 0.9 to
+      # a 248.96 GiB budget. At TP2 it logs 153.98 GiB consumed for weights plus
+      # non-torch, leaving a KV pool of 29,165,388 tokens against TP4's 54,463,509 --
+      # 53.5%, not the 50% a naive halving would predict and nowhere near the ~20%
+      # that assuming fixed total resident weights would give, because the Engram
+      # tables are offloaded to UVA host DRAM and do not scale with TP.
+      #
+      # TP2's advantage is not the collective. A ring all-reduce moves
+      # 2(N-1)/N x payload per GPU, so TP2 against TP4 is 1.0x against 1.5x -- a 33%
+      # reduction, not a halving. What the measurement shows is simply that the second
+      # pair of GPUs is not earning its place on this workload:
+      #
+      #     TP2 c16   36,968 tok/s/GPU @ p90 eNI  97.4   vs TP4 c32   36,585 @ 56.2
+      #     TP2 c32   69,484            @        53.3   vs TP4 c64   59,015 @ 35.8
+      #     TP2 c64  111,748            @        33.2   vs TP4 c128  63,263 @ 10.0
+      #
+      # (Measured on an external 18-node GB300 cluster at 900 s per point, with
+      # tput_per_gpu and p90 E2E-normalised interactivity recomputed from
+      # profile_export.jsonl using infx/results/agentic record selection. That cluster
+      # scores 0.62x the published GB300 TP4 c128 throughput on a matched config, so
+      # these magnitudes are not comparable to the curve -- but both arms ran 80
+      # minutes apart on one cluster with one client, so the ordering is the
+      # measurement. The board's own B300 TP2 row, ahead of B300 TP4 by ~68% on this
+      # trace and this harness, is the independent corroboration.)
+      #
+      # conc 1 is omitted only to mirror the B300 conc-list; it is not a claim about
+      # TP2 at c1, which has not been measured here.
+      - { tp: 2, kv-offloading: none, spec-decoding: mtp, conc-list: [2, 4, 8, 16, 32, 64, 128] }
+
+dsv41flash-fp4-b200-vllm-agentic-dspark:
+  image: vllm/vllm-openai:nightly-cd10ed6f9f6b37a8ace9cf380007e66fe12ec0c3
+  model: deepseek-ai/DeepSeek-V4.1-Flash
+  model-prefix: dsv41flash
+  runner: cluster:b200-nscale
+  precision: fp4
+  framework: vllm
+  multinode: false
+  scenarios:
+    agentic-coding:
+    - dram-utilization: 0.80
+      search-space:
+      # Engram weights use UVA DRAM; the KV cache stays GPU-resident.
+      - { tp: 4, kv-offloading: none, spec-decoding: mtp, conc-list: [1, 2, 4, 8, 16, 32, 64, 128] }
+
+# SGLang arm for DeepSeek-V4.1-Flash AgentX on B200, from the SGLang cookbook
+# (https://lmsysorg.mintlify.app/cookbook/autoregressive/DeepSeek/DeepSeek-V4_1).
+# DSv4.1 Flash support has not shipped in an SGLang release; this uses the
+# preview build lmsysorg/sglang:dev-dsv41, digest
+# sha256:4a5d132a06a77c8331e15845f2e925adc788b00105097ad55409afa3f4fa4860 (2026-09-11, amd64 + arm64).
+# Native five-token DSpark (--speculative-algorithm DSPARK
+# --speculative-dspark-block-size 5), thinking on, golden AL 3.51 for
+# throughput, real verification for evals. The KV cache stays GPU-resident.
+# Follows the cookbook's verified Blackwell TP4/EP4 low-latency cell; backends
+# resolve automatically (dsv4 / flashinfer_mxfp4 / flashinfer_cutedsl).
+dsv41flash-fp4-b200-sglang-agentic-dspark:
+  image: lmsysorg/sglang:dev-dsv41
+  model: deepseek-ai/DeepSeek-V4.1-Flash
+  model-prefix: dsv41flash
+  runner: cluster:b200-nscale
+  precision: fp4
+  framework: sglang
+  multinode: false
+  scenarios:
+    agentic-coding:
+    - dram-utilization: 0.80
+      search-space:
+      - { tp: 4, ep: 4, kv-offloading: none, spec-decoding: mtp, conc-list: [1, 2, 4, 8, 16, 32, 64, 128] }
+
+dsv41flash-fp4-gb300-vllm-agentic-dspark:
+  image: vllm/vllm-openai:nightly-af1c01499b289be555c475669ba50a88e96d846e
+  model: deepseek-ai/DeepSeek-V4.1-Flash
+  model-prefix: dsv41flash
+  runner: cluster:gb300-nv
+  precision: fp4
+  framework: vllm
+  multinode: false
+  scenarios:
+    agentic-coding:
+    - dram-utilization: 0.80
+      search-space:
+      # Engram weights use UVA DRAM; the KV cache stays GPU-resident.
+      - { tp: 4, kv-offloading: none, spec-decoding: mtp, conc-list: [1, 2, 4, 8, 16, 32, 64, 128] }
+      # Same recipe on two GPUs, matching the row the B300 arm already carries.
+      # GB300's 276 GiB per GPU holds the checkpoint minus the UVA-offloaded Engram
+      # tables on two cards, so TP2 halves the per-token collective without spilling
+      # the KV cache.
+      #
+      # This is the one arm where the two GPU counts are not a trade. Measured on an
+      # 18-node GB300 cluster at 900 s per point, recomputing tput_per_gpu and p90
+      # E2E-normalised interactivity with infx's own record selection, the TP2 curve
+      # dominates the TP4 curve at every matched point:
+      #
+      #     TP2 c16   36,968 tok/s/GPU @ p90 eNI  97.4   vs TP4 c32   36,585 @ 56.2
+      #     TP2 c32   69,484            @        53.3   vs TP4 c64   59,015 @ 35.8
+      #     TP2 c64  111,748            @        33.2   vs TP4 c128  63,263 @ 10.0
+      #
+      # Prefix-cache hit rate is unchanged across the two shapes (93.7-94.2% on TP2,
+      # 91.0-94.0% on TP4), so halving the per-instance KV pool costs nothing at
+      # these concurrencies. Those absolute numbers are from a different harness than
+      # this repo's and are not comparable to the published curve -- the same cluster
+      # scores 0.62x the published GB300 TP4 c128 throughput -- but both arms were
+      # measured 80 minutes apart on one cluster with one client, so the ordering is
+      # the measurement. The board's own B300 TP2 point, +68% over B300 TP4 on this
+      # trace and this harness, is the independent corroboration.
+      #
+      # c1 is dropped: a TP2 instance reaches the TP4 arm's c1 interactivity above c1.
+      - { tp: 2, kv-offloading: none, spec-decoding: mtp, conc-list: [2, 4, 8, 16, 32, 64, 128] }
 
 # H200 AgentX arm for DeepSeek-V4.1-Flash. Upstream marks h200 verified and says
 # the GB200 NVL4 TP4 layout becomes TP8 on 8-GPU nodes, so this is TP8.
