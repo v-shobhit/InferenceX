@@ -6,8 +6,50 @@ set -eo pipefail
 source "$(dirname "$0")/../../benchmark_lib.sh"
 check_env_vars MODEL TP CONC KV_OFFLOADING TOTAL_CPU_DRAM_GB RESULT_DIR DURATION
 check_env_vars DSV41_MIN_CUDAGRAPH_CAPTURE_SIZE EVAL_ONLY VLLM_ENGINE_READY_TIMEOUT_S
-require_agentic_kv_offload_none
 export GPU_COUNT="$TP"
+
+# KV tier. Every existing row of every arm that uses this script runs
+# KV_OFFLOADING=none and leaves KV_OFFLOAD_BACKEND unset, which takes the first
+# branch and is byte-identical to the previous behaviour.
+#
+# vllm-simple adds a host-DRAM tier through SimpleCPUOffloadConnector, the same
+# backend dsv4_fp4_b200_vllm_mtp.sh uses, with the same per-rank division of the
+# aggregate budget. The AgentX corpus is what motivates it: its prompts are ~245k
+# tokens at the median and ~99% of their KV blocks are repeats of a prefix seen
+# earlier in the same trajectory, with ~557k tokens of unique KV per trajectory.
+# The GPU-resident KV pool stops covering that working set well before the top of
+# the published concurrency list, and past that point the achieved prefix-cache
+# hit rate is set by how much of the tier lives in host DRAM.
+OFFLOAD_ARGS=()
+case "${KV_OFFLOAD_BACKEND:-}" in
+    "")
+        require_agentic_kv_offload_none
+        ;;
+    vllm-simple)
+        require_agentic_kv_offload_backend vllm-simple
+        CPU_BYTES_PER_RANK=$(( TOTAL_CPU_DRAM_GB * 1000 * 1000 * 1000 / GPU_COUNT ))
+        # Identical prefixes must hash to identical block keys across ranks, or the
+        # tier is populated and never hit.
+        export PYTHONHASHSEED=42
+        OFFLOAD_ARGS=(--kv-transfer-config "$(cat <<EOF
+{
+  "kv_connector": "SimpleCPUOffloadConnector",
+  "kv_role": "kv_both",
+  "kv_connector_extra_config": {
+    "cpu_bytes_to_use_per_rank": ${CPU_BYTES_PER_RANK},
+    "enable_cross_layers_blocks": "true",
+    "lazy_offload": false
+  }
+}
+EOF
+)")
+        echo "KV host tier: ${TOTAL_CPU_DRAM_GB} GB aggregate, ${CPU_BYTES_PER_RANK} B per rank across ${GPU_COUNT} ranks"
+        ;;
+    *)
+        echo "Error: unsupported KV_OFFLOAD_BACKEND='${KV_OFFLOAD_BACKEND}'" >&2
+        exit 1
+        ;;
+esac
 
 # Complete/resume partial downloads instead of trusting nonempty directories.
 if [[ -n "${MODEL_PATH:-}" && "$MODEL_PATH" != "$MODEL" ]]; then
@@ -73,6 +115,7 @@ VLLM_CMD=(
     --max-cudagraph-capture-size "$CAPTURE_SIZE"
     --disable-uvicorn-access-log
     "${LOAD_ARGS[@]}"
+    "${OFFLOAD_ARGS[@]}"
 )
 printf '%q ' "${VLLM_CMD[@]}" | tee "$RESULT_DIR/vllm_command.txt"
 printf '\n' | tee -a "$RESULT_DIR/vllm_command.txt"
