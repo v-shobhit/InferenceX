@@ -139,13 +139,19 @@ SGLANG_CMD=(
     --trust-remote-code
     --tp "$TP" --ep-size "$EP_SIZE"
     --disable-radix-cache
-    # 0.75 rather than the cookbook's 0.8, and a 4096-token prefill chunk as on
+    # 0.60 rather than the cookbook's 0.8, and a 4096-token prefill chunk as on
     # the CUDA arms: the sparse-attention indexer and DSpark prefill buffers
     # scale with the chunk times the 1M context (the default 16384 exhausted
     # HBM on the first 66k-99k-token prompts), and the per-chunk RCCL
     # collectives shrink with it. With 8192 and the queue cap, c1-c16 served
     # but c32 still lost a rank 27 warmup requests in (run 35374653446).
-    --mem-fraction-static 0.75
+    # With the Engram tables resident on the GPU the weights take 128.8 GB of
+    # each 288 GB MI355X, so 0.75 left only 72 GB outside the static pool and
+    # the c2 prefill of a 126k-token prompt still aborted its RCCL queue with
+    # HSA_STATUS_ERROR_OUT_OF_RESOURCES at 0 MB free (run 35376928227). The
+    # full-attention KV costs 1.67 KB per token, so 0.60 still reserves a
+    # ~25M-token pool (0.75 reserved 51M) while eager prefill gets 115 GB.
+    --mem-fraction-static 0.60
     --chunked-prefill-size 4096
     --speculative-algorithm DSPARK
     --speculative-dspark-block-size "$DSPARK_BLOCK_SIZE"
